@@ -72,6 +72,12 @@
     .url-bar button:hover { background: #3a8eef; }
     .url-bar button:disabled { background: #333; color: #666; cursor: not-allowed; }
 
+    .separator {
+      color: #555;
+      font-size: 0.8125rem;
+      align-self: center;
+    }
+
     #status {
       max-width: 800px;
       margin: 0 auto;
@@ -178,13 +184,16 @@
 <body>
   <header>
     <h1>RTTL Preview</h1>
-    <p>Paste any GitHub repo URL to scan for RTTTL ringtones (.rtttl, .txt, or embedded in files).</p>
+    <p>Paste a GitHub repo URL or open a local folder to browse and preview RTTTL ringtones.</p>
   </header>
 
   <div class="url-bar">
     <input type="text" id="repoUrl" placeholder="https://github.com/owner/repo"
       value="https://github.com/hak5/wifipineapplepager-ringtones/tree/1c06d7dadc0aa54e8d3e52e65033932a15361dc8">
     <button id="loadBtn" onclick="loadFromUrl()">Load</button>
+    <span class="separator">or</span>
+    <button id="folderBtn" onclick="loadFromFolder()">Local Folder</button>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
   </div>
 
   <div id="status"></div>
@@ -337,6 +346,135 @@
 
       btn.disabled = false;
       btn.textContent = 'Load';
+    }
+
+    // Load from a local folder
+    async function loadFromFolder() {
+      stopCurrent();
+
+      // Try modern File System Access API first, fall back to <input webkitdirectory>
+      if (window.showDirectoryPicker) {
+        try {
+          const dirHandle = await window.showDirectoryPicker();
+          await scanDirectoryHandle(dirHandle, '');
+        } catch (err) {
+          if (err.name !== 'AbortError') setStatus(`Error: ${err.message}`, true);
+        }
+      } else {
+        // Fallback: trigger hidden file input
+        const input = document.getElementById('folderInput');
+        input.value = '';
+        input.onchange = () => scanFileList(input.files);
+        input.click();
+      }
+    }
+
+    // File System Access API: recursively read a directory handle
+    async function scanDirectoryHandle(dirHandle, path) {
+      const btn = document.getElementById('folderBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      setStatus('Scanning local folder...');
+
+      const ringtones = [];
+      const candidates = [];
+
+      // Collect all candidate files recursively
+      async function walk(handle, currentPath) {
+        for await (const entry of handle.values()) {
+          if (entry.kind === 'file') {
+            const ext = entry.name.split('.').pop().toLowerCase();
+            if (['rtttl', 'txt', 'rttl'].includes(ext)) {
+              candidates.push({ handle: entry, path: currentPath });
+            }
+          } else if (entry.kind === 'directory') {
+            await walk(entry, currentPath ? `${currentPath}/${entry.name}` : entry.name);
+          }
+        }
+      }
+
+      try {
+        await walk(dirHandle, '');
+        setStatus(`Found ${candidates.length} candidate files, reading...`);
+
+        for (const { handle: fileHandle, path: folder } of candidates) {
+          try {
+            const file = await fileHandle.getFile();
+            const text = (await file.text()).trim();
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l && looksLikeRTTTL(l));
+            for (const line of lines) {
+              const rtttlName = line.split(':')[0].trim() || file.name.replace(/\.[^.]+$/, '');
+              ringtones.push({ name: rtttlName, folder, rtttl: line });
+            }
+          } catch {}
+        }
+
+        if (ringtones.length === 0) {
+          setStatus('No valid RTTTL ringtones found in the selected folder.', true);
+        } else {
+          ringtones.sort((a, b) => a.name.localeCompare(b.name));
+          renderRingtones(ringtones);
+          setStatus(`Loaded ${ringtones.length} ringtones from local folder.`);
+        }
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, true);
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Local Folder';
+    }
+
+    // Fallback: process files from <input webkitdirectory>
+    function scanFileList(files) {
+      const btn = document.getElementById('folderBtn');
+      btn.disabled = true;
+      btn.textContent = 'Scanning...';
+      setStatus(`Scanning ${files.length} files...`);
+
+      const ringtones = [];
+      let processed = 0;
+
+      const candidates = Array.from(files).filter(f => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        return ['rtttl', 'txt', 'rttl'].includes(ext);
+      });
+
+      if (candidates.length === 0) {
+        setStatus('No candidate RTTTL files found in the selected folder.', true);
+        btn.disabled = false;
+        btn.textContent = 'Local Folder';
+        return;
+      }
+
+      setStatus(`Found ${candidates.length} candidate files, reading...`);
+
+      let done = 0;
+      candidates.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const text = (reader.result || '').trim();
+          const lines = text.split('\n').map(l => l.trim()).filter(l => l && looksLikeRTTTL(l));
+          const folder = file.webkitRelativePath ? file.webkitRelativePath.substring(0, file.webkitRelativePath.lastIndexOf('/')) : '';
+          for (const line of lines) {
+            const rtttlName = line.split(':')[0].trim() || file.name.replace(/\.[^.]+$/, '');
+            ringtones.push({ name: rtttlName, folder, rtttl: line });
+          }
+
+          done++;
+          if (done === candidates.length) {
+            if (ringtones.length === 0) {
+              setStatus('No valid RTTTL ringtones found in the selected folder.', true);
+            } else {
+              ringtones.sort((a, b) => a.name.localeCompare(b.name));
+              renderRingtones(ringtones);
+              setStatus(`Loaded ${ringtones.length} ringtones from local folder.`);
+            }
+            btn.disabled = false;
+            btn.textContent = 'Local Folder';
+          }
+        };
+        reader.readAsText(file);
+      });
     }
 
     function renderRingtones(ringtones) {
