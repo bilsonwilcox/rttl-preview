@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RTTL Preview</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 2rem 1.5rem 1rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 0.25rem;
+    }
+
+    header p {
+      font-size: 0.875rem;
+      color: #888;
+    }
+
+    .url-bar {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 1.5rem;
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .url-bar input {
+      flex: 1;
+      padding: 0.625rem 0.875rem;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .url-bar input:focus { border-color: #4a9eff; }
+
+    .url-bar input::placeholder { color: #555; }
+
+    .url-bar button {
+      padding: 0.625rem 1.25rem;
+      border: none;
+      border-radius: 6px;
+      background: #4a9eff;
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .url-bar button:hover { background: #3a8eef; }
+    .url-bar button:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+    #status {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+      font-size: 0.8125rem;
+      color: #888;
+      min-height: 1.25rem;
+    }
+
+    #status.error { color: #ef4444; }
+
+    .ringtone-list {
+      max-width: 800px;
+      margin: 1rem auto 2rem;
+      padding: 0 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ringtone-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.625rem 0.875rem;
+      background: #1a1a1a;
+      border-radius: 6px;
+      transition: background 0.1s;
+    }
+
+    .ringtone-item:hover { background: #222; }
+    .ringtone-item.playing { background: #1a2a3a; }
+
+    .play-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: #333;
+      color: #e0e0e0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+
+    .play-btn:hover { background: #4a9eff; color: #fff; }
+    .ringtone-item.playing .play-btn { background: #4a9eff; color: #fff; }
+
+    .play-btn svg { width: 16px; height: 16px; }
+
+    .ringtone-name {
+      font-size: 0.875rem;
+      font-weight: 500;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ringtone-folder {
+      font-size: 0.6875rem;
+      color: #555;
+      flex-shrink: 0;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ringtone-meta {
+      font-size: 0.75rem;
+      color: #666;
+      flex-shrink: 0;
+    }
+
+    .search-bar {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 1.5rem 0.75rem;
+      display: none;
+    }
+
+    .search-bar.visible { display: block; }
+
+    .search-bar input {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-size: 0.8125rem;
+      outline: none;
+    }
+
+    .search-bar input:focus { border-color: #4a9eff; }
+    .search-bar input::placeholder { color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RTTL Preview</h1>
+    <p>Paste any GitHub repo URL to scan for RTTTL ringtones (.rtttl, .txt, or embedded in files).</p>
+  </header>
+
+  <div class="url-bar">
+    <input type="text" id="repoUrl" placeholder="https://github.com/owner/repo"
+      value="https://github.com/neverfa11ing/FlipperMusicRTTTL">
+    <button id="loadBtn" onclick="loadFromUrl()">Load</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="search-bar" id="searchBar">
+    <input type="text" id="searchInput" placeholder="Filter ringtones..." oninput="filterRingtones()">
+  </div>
+
+  <div class="ringtone-list" id="ringtoneList"></div>
+
+  <script>
+    let audioCtx = null;
+    let currentlyPlaying = null; // { element, stopFn }
+    let allRingtones = []; // { name, rtttl, element }
+
+    function getAudioCtx() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      return audioCtx;
+    }
+
+    function setStatus(msg, isError) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = isError ? 'error' : '';
+    }
+
+    // Parse any GitHub URL into { owner, repo, ref, subpath }
+    function parseGitHubUrl(url) {
+      // Clean up
+      url = url.replace(/\/+$/, '').replace(/\.git$/, '');
+      // https://github.com/owner/repo/tree/ref/path
+      let m = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*))?$/);
+      if (m) return { owner: m[1], repo: m[2], ref: m[3], subpath: m[4] || '' };
+      // https://github.com/owner/repo/blob/ref/path (single file)
+      m = url.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)(?:\/(.*))?$/);
+      if (m) return { owner: m[1], repo: m[2], ref: m[3], subpath: m[4] || '' };
+      // https://github.com/owner/repo
+      m = url.match(/github\.com\/([^/]+)\/([^/]+)$/);
+      if (m) return { owner: m[1], repo: m[2], ref: '', subpath: '' };
+      return null;
+    }
+
+    // Quick check if a string looks like valid RTTTL
+    function looksLikeRTTTL(text) {
+      // RTTTL format: name:settings:notes — 3 colon-separated sections
+      const parts = text.split(':');
+      if (parts.length < 3) return false;
+      // Settings section should have d=, o=, or b=
+      const settings = parts[1];
+      if (!/[dob]\s*=/i.test(settings)) return false;
+      // Notes section should have note-like tokens
+      const notes = parts.slice(2).join(':');
+      return /[a-gp]/i.test(notes);
+    }
+
+    async function loadFromUrl() {
+      const url = document.getElementById('repoUrl').value.trim();
+      if (!url) return;
+
+      const parsed = parseGitHubUrl(url);
+      if (!parsed) {
+        setStatus('Invalid GitHub URL. Paste any github.com/owner/repo URL.', true);
+        return;
+      }
+
+      const btn = document.getElementById('loadBtn');
+      btn.disabled = true;
+      btn.textContent = 'Loading...';
+      setStatus('Scanning repository for RTTTL files...');
+      stopCurrent();
+
+      try {
+        // Determine the default branch if no ref specified
+        let ref = parsed.ref;
+        if (!ref) {
+          const repoResp = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`);
+          if (!repoResp.ok) throw new Error(`GitHub API error: ${repoResp.status}`);
+          const repoData = await repoResp.json();
+          ref = repoData.default_branch;
+        }
+
+        // Use recursive tree API to get all files at once
+        const treeResp = await fetch(
+          `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/trees/${ref}?recursive=1`
+        );
+        if (!treeResp.ok) throw new Error(`GitHub API error: ${treeResp.status}`);
+        const treeData = await treeResp.json();
+
+        // Filter to candidate files within subpath
+        const candidates = treeData.tree.filter(f => {
+          if (f.type !== 'blob') return false;
+          if (parsed.subpath && !f.path.startsWith(parsed.subpath)) return false;
+          const ext = f.path.split('.').pop().toLowerCase();
+          return ['rtttl', 'txt', 'rttl'].includes(ext);
+        });
+
+        if (candidates.length === 0) {
+          setStatus('No candidate RTTTL files found in this repository.', true);
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          return;
+        }
+
+        setStatus(`Found ${candidates.length} candidate files, fetching contents...`);
+
+        // Fetch contents in batches to avoid hammering the server
+        const BATCH_SIZE = 30;
+        const ringtones = [];
+        for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+          const batch = candidates.slice(i, i + BATCH_SIZE);
+          const results = await Promise.all(
+            batch.map(async (f) => {
+              try {
+                const rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${ref}/${f.path}`;
+                const r = await fetch(rawUrl);
+                const text = (await r.text()).trim();
+                // A file may contain multiple RTTTL strings (one per line)
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l && looksLikeRTTTL(l));
+                if (lines.length > 0) {
+                  return lines.map(line => {
+                    // Use RTTTL name from the string itself, with folder context
+                    const rtttlName = line.split(':')[0].trim();
+                    const folder = f.path.includes('/') ? f.path.substring(0, f.path.lastIndexOf('/')) : '';
+                    return { name: rtttlName, folder, rtttl: line };
+                  });
+                }
+                return null;
+              } catch {
+                return null;
+              }
+            })
+          );
+          results.filter(Boolean).flat().forEach(r => ringtones.push(r));
+          setStatus(`Fetching... ${Math.min(i + BATCH_SIZE, candidates.length)}/${candidates.length} files scanned, ${ringtones.length} ringtones found`);
+        }
+
+        if (ringtones.length === 0) {
+          setStatus('No valid RTTTL ringtones found in the scanned files.', true);
+          btn.disabled = false;
+          btn.textContent = 'Load';
+          return;
+        }
+
+        ringtones.sort((a, b) => a.name.localeCompare(b.name));
+        renderRingtones(ringtones);
+        setStatus(`Loaded ${ringtones.length} ringtones.`);
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, true);
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Load';
+    }
+
+    function renderRingtones(ringtones) {
+      const list = document.getElementById('ringtoneList');
+      list.innerHTML = '';
+      allRingtones = [];
+
+      const searchBar = document.getElementById('searchBar');
+      searchBar.classList.toggle('visible', ringtones.length > 0);
+      document.getElementById('searchInput').value = '';
+
+      ringtones.forEach(({ name, folder, rtttl }) => {
+        // Parse to get BPM for display
+        let bpm = '';
+        try {
+          const parts = rtttl.split(':');
+          if (parts.length >= 2) {
+            const m = parts[1].match(/b=(\d+)/);
+            if (m) bpm = m[1] + ' BPM';
+          }
+        } catch {}
+
+        const safeName = name.replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        const item = document.createElement('div');
+        item.className = 'ringtone-item';
+        item.innerHTML = `
+          <button class="play-btn" aria-label="Play ${safeName}">
+            <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+          </button>
+          <span class="ringtone-name" title="${safeName}">${safeName}</span>
+          ${folder ? `<span class="ringtone-folder">${folder}</span>` : ''}
+          <span class="ringtone-meta">${bpm}</span>
+        `;
+
+        const btn = item.querySelector('.play-btn');
+        btn.addEventListener('click', () => togglePlay(item, rtttl, btn));
+
+        list.appendChild(item);
+        allRingtones.push({ name, folder: folder || '', rtttl, element: item });
+      });
+    }
+
+    function filterRingtones() {
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      allRingtones.forEach(({ name, folder, element }) => {
+        const match = name.toLowerCase().includes(query) || folder.toLowerCase().includes(query);
+        element.style.display = match ? '' : 'none';
+      });
+    }
+
+    const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>';
+    const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
+
+    function stopCurrent() {
+      if (currentlyPlaying) {
+        currentlyPlaying.stopFn();
+        currentlyPlaying.btn.innerHTML = PLAY_SVG;
+        currentlyPlaying.element.classList.remove('playing');
+        currentlyPlaying = null;
+      }
+    }
+
+    function togglePlay(element, rtttl, btn) {
+      // If this one is already playing, stop it
+      if (currentlyPlaying && currentlyPlaying.element === element) {
+        stopCurrent();
+        return;
+      }
+
+      stopCurrent();
+
+      try {
+        const parsed = parseRTTTL(rtttl);
+        if (!parsed || parsed.melody.length === 0) {
+          setStatus('Failed to parse this ringtone.', true);
+          return;
+        }
+
+        const ctx = getAudioCtx();
+        let stopped = false;
+        let timeouts = [];
+
+        element.classList.add('playing');
+        btn.innerHTML = STOP_SVG;
+
+        let offset = 0;
+        parsed.melody.forEach((note) => {
+          const noteOffset = offset;
+          const t = setTimeout(() => {
+            if (stopped) return;
+            if (note.frequency > 0) {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.type = 'square';
+              osc.frequency.value = note.frequency;
+              gain.gain.setValueAtTime(0.15, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.duration / 1000 * 0.9);
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              osc.start();
+              osc.stop(ctx.currentTime + note.duration / 1000);
+            }
+          }, noteOffset);
+          timeouts.push(t);
+          offset += note.duration;
+        });
+
+        // Auto-stop when done
+        const endTimeout = setTimeout(() => {
+          if (!stopped) stopCurrent();
+        }, offset + 100);
+        timeouts.push(endTimeout);
+
+        const stopFn = () => {
+          stopped = true;
+          timeouts.forEach(clearTimeout);
+        };
+
+        currentlyPlaying = { element, btn, stopFn };
+      } catch (err) {
+        setStatus(`Playback error: ${err.message}`, true);
+      }
+    }
+
+    // Minimal RTTTL parser (no external dependency needed)
+    function parseRTTTL(rtttl) {
+      const parts = rtttl.split(':');
+      if (parts.length !== 3) return null;
+
+      const name = parts[0].trim();
+      const settings = parts[1].trim();
+      const notes = parts[2].trim();
+
+      // Defaults
+      let d = 4, o = 6, b = 63;
+      settings.split(',').forEach(s => {
+        const [k, v] = s.trim().split('=');
+        if (k === 'd') d = parseInt(v);
+        else if (k === 'o') o = parseInt(v);
+        else if (k === 'b') b = parseInt(v);
+      });
+
+      const wholeDuration = (60000 / b) * 4; // ms for a whole note
+
+      const NOTE_FREQS = {
+        c: [16.35, 32.70, 65.41, 130.81, 261.63, 523.25, 1046.50, 2093.00, 4186.01],
+        'c#': [17.32, 34.65, 69.30, 138.59, 277.18, 554.37, 1108.73, 2217.46, 4434.92],
+        d: [18.35, 36.71, 73.42, 146.83, 293.66, 587.33, 1174.66, 2349.32, 4698.63],
+        'd#': [19.45, 38.89, 77.78, 155.56, 311.13, 622.25, 1244.51, 2489.02, 4978.03],
+        e: [20.60, 41.20, 82.41, 164.81, 329.63, 659.25, 1318.51, 2637.02, 5274.04],
+        f: [21.83, 43.65, 87.31, 174.61, 349.23, 698.46, 1396.91, 2793.83, 5587.65],
+        'f#': [23.12, 46.25, 92.50, 185.00, 369.99, 739.99, 1479.98, 2959.96, 5919.91],
+        g: [24.50, 49.00, 98.00, 196.00, 392.00, 783.99, 1567.98, 3135.96, 6271.93],
+        'g#': [25.96, 51.91, 103.83, 207.65, 415.30, 830.61, 1661.22, 3322.44, 6644.88],
+        a: [27.50, 55.00, 110.00, 220.00, 440.00, 880.00, 1760.00, 3520.00, 7040.00],
+        'a#': [29.14, 58.27, 116.54, 233.08, 466.16, 932.33, 1864.66, 3729.31, 7458.62],
+        b: [30.87, 61.74, 123.47, 246.94, 493.88, 987.77, 1975.53, 3951.07, 7902.13],
+      };
+      // h is alias for b in some RTTTL
+      NOTE_FREQS['h'] = NOTE_FREQS['b'];
+
+      const melody = [];
+      const noteTokens = notes.split(',');
+
+      for (let token of noteTokens) {
+        token = token.trim().toLowerCase();
+        if (!token) continue;
+
+        let i = 0;
+
+        // Duration prefix
+        let dur = d;
+        if (token[i] >= '0' && token[i] <= '9') {
+          let num = '';
+          while (i < token.length && token[i] >= '0' && token[i] <= '9') num += token[i++];
+          dur = parseInt(num);
+        }
+
+        // Note name
+        let noteName = '';
+        if (i < token.length && token[i] === 'p') {
+          noteName = 'p';
+          i++;
+        } else if (i < token.length) {
+          noteName = token[i++];
+          if (i < token.length && token[i] === '#') {
+            noteName += '#';
+            i++;
+          }
+        }
+
+        // Dotted note
+        let dotted = false;
+        if (i < token.length && token[i] === '.') {
+          dotted = true;
+          i++;
+        }
+
+        // Octave suffix
+        let oct = o;
+        if (i < token.length && token[i] >= '0' && token[i] <= '9') {
+          oct = parseInt(token[i++]);
+        }
+
+        // Another dot check (can appear after octave too)
+        if (i < token.length && token[i] === '.') {
+          dotted = true;
+          i++;
+        }
+
+        let duration = wholeDuration / dur;
+        if (dotted) duration *= 1.5;
+
+        let frequency = 0;
+        if (noteName !== 'p' && NOTE_FREQS[noteName]) {
+          frequency = NOTE_FREQS[noteName][oct] || 440;
+        }
+
+        melody.push({ note: noteName, duration, frequency });
+      }
+
+      return { name, defaults: { d, o, b }, melody };
+    }
+  </script>
+</body>
+</html>
