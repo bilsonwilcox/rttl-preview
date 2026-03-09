@@ -321,7 +321,7 @@
                   });
                 }
                 return null;
-              } catch {
+              } catch (e) {
                 return null;
               }
             })
@@ -406,7 +406,7 @@
               const rtttlName = line.split(':')[0].trim() || file.name.replace(/\.[^.]+$/, '');
               ringtones.push({ name: rtttlName, folder, rtttl: line });
             }
-          } catch {}
+          } catch (e) { /* ignore */ }
         }
 
         if (ringtones.length === 0) {
@@ -495,7 +495,7 @@
             const m = parts[1].match(/b=(\d+)/);
             if (m) bpm = m[1] + ' BPM';
           }
-        } catch {}
+        } catch (e) { /* ignore */ }
 
         const safeName = name.replace(/"/g, '&quot;').replace(/</g, '&lt;');
         const item = document.createElement('div');
